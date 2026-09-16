@@ -3,6 +3,7 @@ import dns from 'node:dns';
 import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import jwt from 'jsonwebtoken'; import axios from 'axios'; import bcrypt from 'bcryptjs';
 import PDFDocument from 'pdfkit';
 import { MenuDish, ServiceLog, Prediction, User } from './models.js';
+import { evaluateHistoricalWaste } from './analytics.js';
 const app = express(); app.use(cors()); app.use(express.json());
 // Some local DNS resolvers block Atlas SRV lookups. Configure public resolvers only when requested.
 const atlasDnsServers = process.env.ATLAS_DNS_SERVERS?.split(',').map(server => server.trim()).filter(Boolean);
@@ -35,11 +36,7 @@ app.get('/api/alerts', auth, async (_, res) => {
 });
 app.get('/api/analytics/evaluation', auth, async (_, res) => {
   const logs = await ServiceLog.find().sort({ date: 1 }).lean();
-  const baselineWaste = logs.reduce((sum, log) => sum + log.wasted, 0);
-  // Historical counterfactual: reduce each manual over-preparation surplus by 65%.
-  const modeledWaste = logs.reduce((sum, log) => sum + Math.max(0, Math.round((log.prepared - log.consumed) * .35)), 0);
-  const reductionPercent = baselineWaste ? Number(((baselineWaste - modeledWaste) / baselineWaste * 100).toFixed(1)) : 0;
-  res.json({ records: logs.length, baselineWaste, modeledWaste, reductionPercent, target: 20, targetAchieved: reductionPercent >= 20, methodology: 'Historical counterfactual using a 65% reduction in each logged manual over-preparation surplus.' });
+  res.json(evaluateHistoricalWaste(logs));
 });
 app.get('/api/analytics/report.csv', auth, async (_, res) => {
   const logs = await ServiceLog.find().sort({ date: -1 }).lean();
@@ -49,19 +46,18 @@ app.get('/api/analytics/report.csv', auth, async (_, res) => {
 });
 app.get('/api/analytics/report.pdf', auth, async (_, res) => {
   const [logs, evaluation] = await Promise.all([ServiceLog.find().sort({ date: -1 }).limit(20).lean(), ServiceLog.find().lean()]);
-  const baselineWaste = evaluation.reduce((sum, log) => sum + log.wasted, 0);
-  const modeledWaste = evaluation.reduce((sum, log) => sum + Math.max(0, Math.round((log.prepared - log.consumed) * .35)), 0);
-  const reduction = baselineWaste ? ((baselineWaste - modeledWaste) / baselineWaste * 100).toFixed(1) : '0.0';
+  const backtest = evaluateHistoricalWaste(evaluation);
   res.header('Content-Type', 'application/pdf').attachment('foodwise-waste-report.pdf');
   const pdf = new PDFDocument({ margin: 48, size: 'A4' }); pdf.pipe(res);
   pdf.fillColor('#15803d').fontSize(24).text('FoodWise', { continued: true }).fillColor('#17221d').text(' Waste Reduction Report');
   pdf.moveDown(.4).fillColor('#64748b').fontSize(10).text(`Generated ${new Date().toLocaleDateString('en-IN')} | North Campus Canteen`);
   pdf.moveDown().fillColor('#17221d').fontSize(15).text('Impact summary');
-  pdf.moveDown(.35).fontSize(11).text(`Historical service records: ${evaluation.length}`);
-  pdf.text(`Manual preparation waste: ${baselineWaste} units`); pdf.text(`Model-guided simulated waste: ${modeledWaste} units`); pdf.text(`Estimated waste reduction: ${reduction}%`);
+  pdf.moveDown(.35).fontSize(11).text(`Historical service records: ${backtest.records} (${backtest.evaluatedRecords} evaluated)`);
+  pdf.text(`Manual preparation waste: ${backtest.baselineWaste} units`); pdf.text(`Model-guided simulated waste: ${backtest.modeledWaste} units`); pdf.text(`Estimated waste reduction: ${backtest.reductionPercent}%`);
+  pdf.text(`20% target: ${backtest.targetAchieved ? 'ACHIEVED' : 'NOT ACHIEVED'} | Mean absolute error: ${backtest.mae ?? 'n/a'} units`);
   pdf.moveDown().fontSize(15).text('Recent service records'); pdf.moveDown(.4).fontSize(9);
   logs.forEach(log => pdf.text(`${new Date(log.date).toLocaleDateString('en-IN')}  |  ${log.meal}  |  ${log.dish}  |  Prepared: ${log.prepared}  Served: ${log.consumed}  Waste: ${log.wasted}`));
-  pdf.moveDown().fillColor('#64748b').fontSize(8).text('Methodology: historical counterfactual that reduces each logged manual over-preparation surplus by 65%. Validate with real canteen operations before publishing a production outcome claim.');
+  pdf.moveDown().fillColor('#64748b').fontSize(8).text(`Methodology: ${backtest.methodology} Validate with real canteen operations before publishing a production outcome claim.`);
   pdf.end();
 });
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
