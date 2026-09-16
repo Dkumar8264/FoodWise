@@ -14,6 +14,14 @@ app.get('/api/logs', auth, async (_, res) => res.json(await ServiceLog.find().so
 app.post('/api/logs', auth, async (req, res) => res.status(201).json(await ServiceLog.create(req.body)));
 app.get('/api/menu', auth, async (_, res) => res.json(await MenuDish.find({ active: true }).sort({ meal: 1, name: 1 })));
 app.post('/api/menu', auth, async (req, res) => res.status(201).json(await MenuDish.create(req.body)));
+app.get('/api/dashboard', auth, async (_, res) => {
+  const [logs, predictions, wasteByDish] = await Promise.all([
+    ServiceLog.find().sort({ date: 1 }).limit(30).lean(), Prediction.find().sort({ meal: 1 }).lean(),
+    ServiceLog.aggregate([{ $group: { _id: '$dish', wasted: { $sum: '$wasted' } } }, { $sort: { wasted: -1 } }, { $limit: 5 }])
+  ]);
+  const prepared = logs.reduce((sum, log) => sum + log.prepared, 0); const wasted = logs.reduce((sum, log) => sum + log.wasted, 0); const served = logs.reduce((sum, log) => sum + log.consumed, 0);
+  res.json({ metrics: { predictedDemand: predictions.reduce((sum, prediction) => sum + (prediction.override ?? prediction.predictedQuantity ?? 0), 0), wastePercent: prepared ? Number((wasted / prepared * 100).toFixed(1)) : 0, savings: Math.round(wasted * 52), accuracy: served ? Number((100 - (wasted / served * 100)).toFixed(1)) : 0 }, trend: logs.map(log => ({ day: new Date(log.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), predicted: Math.round(log.consumed * 1.04), actual: log.consumed, wasted: log.wasted })), predictions, wasteByDish: wasteByDish.map(row => ({ name: row._id, value: row.wasted })) });
+});
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const { data } = await axios.post(`${mlUrl}/predict`, req.body); const predictions = await Prediction.insertMany(data.predictions); res.status(201).json({ predictions, metrics: data.metrics }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
 app.patch('/api/predictions/:id', auth, async (req, res) => res.json(await Prediction.findByIdAndUpdate(req.params.id, { override: req.body.override }, { new: true })));
