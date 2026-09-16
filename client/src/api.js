@@ -25,3 +25,10 @@ export async function updatePrediction(token, id, override) {
   if (!response.ok) throw new Error('Could not save the preparation override.');
   return response.json();
 }
+
+export async function createServiceLog(token, entry) {
+  const response = await fetch(`${API_BASE}/logs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(entry) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'Could not save the service log.');
+  return payload;
+}
