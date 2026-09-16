@@ -19,3 +19,9 @@ export async function getDashboard(token) {
   if (!response.ok) throw new Error('Unable to load the latest dashboard data.');
   return response.json();
 }
+
+export async function updatePrediction(token, id, override) {
+  const response = await fetch(`${API_BASE}/predictions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ override }) });
+  if (!response.ok) throw new Error('Could not save the preparation override.');
+  return response.json();
+}
