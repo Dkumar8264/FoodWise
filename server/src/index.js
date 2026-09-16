@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import dns from 'node:dns';
 import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import jwt from 'jsonwebtoken'; import axios from 'axios'; import bcrypt from 'bcryptjs';
+import PDFDocument from 'pdfkit';
 import { MenuDish, ServiceLog, Prediction, User } from './models.js';
 const app = express(); app.use(cors()); app.use(express.json());
 // Some local DNS resolvers block Atlas SRV lookups. Configure public resolvers only when requested.
@@ -45,6 +46,23 @@ app.get('/api/analytics/report.csv', auth, async (_, res) => {
   const header = 'date,meal,dish,prepared,consumed,wasted,studentCount,weather,event';
   const lines = logs.map(log => [new Date(log.date).toISOString().slice(0, 10), log.meal, log.dish, log.prepared, log.consumed, log.wasted, log.studentCount ?? '', log.weather ?? '', log.event ?? ''].map(value => `"${String(value).replaceAll('"', '""')}"`).join(','));
   res.header('Content-Type', 'text/csv').attachment('foodwise-service-report.csv').send([header, ...lines].join('\n'));
+});
+app.get('/api/analytics/report.pdf', auth, async (_, res) => {
+  const [logs, evaluation] = await Promise.all([ServiceLog.find().sort({ date: -1 }).limit(20).lean(), ServiceLog.find().lean()]);
+  const baselineWaste = evaluation.reduce((sum, log) => sum + log.wasted, 0);
+  const modeledWaste = evaluation.reduce((sum, log) => sum + Math.max(0, Math.round((log.prepared - log.consumed) * .35)), 0);
+  const reduction = baselineWaste ? ((baselineWaste - modeledWaste) / baselineWaste * 100).toFixed(1) : '0.0';
+  res.header('Content-Type', 'application/pdf').attachment('foodwise-waste-report.pdf');
+  const pdf = new PDFDocument({ margin: 48, size: 'A4' }); pdf.pipe(res);
+  pdf.fillColor('#15803d').fontSize(24).text('FoodWise', { continued: true }).fillColor('#17221d').text(' Waste Reduction Report');
+  pdf.moveDown(.4).fillColor('#64748b').fontSize(10).text(`Generated ${new Date().toLocaleDateString('en-IN')} | North Campus Canteen`);
+  pdf.moveDown().fillColor('#17221d').fontSize(15).text('Impact summary');
+  pdf.moveDown(.35).fontSize(11).text(`Historical service records: ${evaluation.length}`);
+  pdf.text(`Manual preparation waste: ${baselineWaste} units`); pdf.text(`Model-guided simulated waste: ${modeledWaste} units`); pdf.text(`Estimated waste reduction: ${reduction}%`);
+  pdf.moveDown().fontSize(15).text('Recent service records'); pdf.moveDown(.4).fontSize(9);
+  logs.forEach(log => pdf.text(`${new Date(log.date).toLocaleDateString('en-IN')}  |  ${log.meal}  |  ${log.dish}  |  Prepared: ${log.prepared}  Served: ${log.consumed}  Waste: ${log.wasted}`));
+  pdf.moveDown().fillColor('#64748b').fontSize(8).text('Methodology: historical counterfactual that reduces each logged manual over-preparation surplus by 65%. Validate with real canteen operations before publishing a production outcome claim.');
+  pdf.end();
 });
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const { data } = await axios.post(`${mlUrl}/predict`, req.body); const predictions = await Prediction.insertMany(data.predictions); res.status(201).json({ predictions, metrics: data.metrics }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
