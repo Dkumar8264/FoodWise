@@ -1,13 +1,19 @@
 import 'dotenv/config';
-import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import jwt from 'jsonwebtoken'; import axios from 'axios';
-import { ServiceLog, Prediction } from './models.js';
+import dns from 'node:dns';
+import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import jwt from 'jsonwebtoken'; import axios from 'axios'; import bcrypt from 'bcryptjs';
+import { MenuDish, ServiceLog, Prediction, User } from './models.js';
 const app = express(); app.use(cors()); app.use(express.json());
+// Some local DNS resolvers block Atlas SRV lookups. Configure public resolvers only when requested.
+const atlasDnsServers = process.env.ATLAS_DNS_SERVERS?.split(',').map(server => server.trim()).filter(Boolean);
+if (atlasDnsServers?.length) dns.setServers(atlasDnsServers);
 const mlUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 const auth = (req, res, next) => { try { req.user = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET); next(); } catch { res.status(401).json({ message: 'Authentication required' }); } };
 app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'foodwise-api' }));
-app.post('/api/auth/login', (req, res) => { const { email, password } = req.body; if (email !== 'admin@foodwise.in' || password !== 'foodwise123') return res.status(401).json({ message: 'Invalid email or password' }); res.json({ token: jwt.sign({ email, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '8h' }), user: { name: 'Arjun Kapoor', email } }); });
+app.post('/api/auth/login', async (req, res) => { const { email, password } = req.body; const user = await User.findOne({ email: email?.toLowerCase() }); if (!user || !await bcrypt.compare(password || '', user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' }); res.json({ token: jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' }), user: { name: user.name, email: user.email } }); });
 app.get('/api/logs', auth, async (_, res) => res.json(await ServiceLog.find().sort({ date: -1 }).limit(100)));
 app.post('/api/logs', auth, async (req, res) => res.status(201).json(await ServiceLog.create(req.body)));
+app.get('/api/menu', auth, async (_, res) => res.json(await MenuDish.find({ active: true }).sort({ meal: 1, name: 1 })));
+app.post('/api/menu', auth, async (req, res) => res.status(201).json(await MenuDish.create(req.body)));
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const { data } = await axios.post(`${mlUrl}/predict`, req.body); const predictions = await Prediction.insertMany(data.predictions); res.status(201).json({ predictions, metrics: data.metrics }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
 app.patch('/api/predictions/:id', auth, async (req, res) => res.json(await Prediction.findByIdAndUpdate(req.params.id, { override: req.body.override }, { new: true })));
