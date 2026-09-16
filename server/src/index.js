@@ -24,6 +24,14 @@ app.get('/api/dashboard', auth, async (_, res) => {
   const prepared = logs.reduce((sum, log) => sum + log.prepared, 0); const wasted = logs.reduce((sum, log) => sum + log.wasted, 0); const served = logs.reduce((sum, log) => sum + log.consumed, 0);
   res.json({ metrics: { predictedDemand: predictions.reduce((sum, prediction) => sum + (prediction.override ?? prediction.predictedQuantity ?? 0), 0), wastePercent: prepared ? Number((wasted / prepared * 100).toFixed(1)) : 0, savings: Math.round(wasted * 52), accuracy: served ? Number((100 - (wasted / served * 100)).toFixed(1)) : 0 }, trend: logs.map(log => ({ day: new Date(log.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), predicted: Math.round(log.consumed * 1.04), actual: log.consumed, wasted: log.wasted })), predictions, wasteByDish: wasteByDish.map(row => ({ name: row._id, value: row.wasted })) });
 });
+app.get('/api/alerts', auth, async (_, res) => {
+  const highWaste = await ServiceLog.aggregate([
+    { $group: { _id: '$dish', prepared: { $sum: '$prepared' }, wasted: { $sum: '$wasted' }, entries: { $sum: 1 } } },
+    { $project: { dish: '$_id', entries: 1, wastePercent: { $round: [{ $multiply: [{ $divide: ['$wasted', '$prepared'] }, 100] }, 1] } } },
+    { $match: { wastePercent: { $gte: 5 } } }, { $sort: { wastePercent: -1 } }
+  ]);
+  res.json(highWaste.map(alert => ({ severity: alert.wastePercent >= 10 ? 'high' : 'medium', message: `${alert.dish} is wasting ${alert.wastePercent}% of prepared food across ${alert.entries} logged service days.`, ...alert })));
+});
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const { data } = await axios.post(`${mlUrl}/predict`, req.body); const predictions = await Prediction.insertMany(data.predictions); res.status(201).json({ predictions, metrics: data.metrics }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
 app.patch('/api/predictions/:id', auth, async (req, res) => res.json(await Prediction.findByIdAndUpdate(req.params.id, { override: req.body.override }, { new: true })));
