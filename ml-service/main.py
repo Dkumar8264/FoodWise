@@ -6,6 +6,7 @@ import joblib
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from train import MODEL_PATH, train
+from features import build_feature_row, scale_prediction
 
 app = FastAPI(title='FoodWise ML Service')
 
@@ -29,15 +30,10 @@ def train_demo_model(base):
 def real_model_prediction(payload, dish):
     """Predict with the persisted Atlas-trained model, scaled to the requested dish baseline."""
     artifact = joblib.load(MODEL_PATH)
-    weekday = date.fromisoformat(payload.date).weekday()
-    feature_row = [[
-        weekday, date.fromisoformat(payload.date).month, payload.studentCount,
-        int(payload.event.lower() not in ['none', 'holiday']), int(payload.event.lower() == 'holiday'),
-        int(payload.weather.lower() == 'rain'), dish.get('lag7', dish.get('base', 120))
-    ]]
+    feature_row = build_feature_row(payload.date, payload.studentCount, payload.event, payload.weather, dish.get('lag7', dish.get('base', 120)))
     base_quantity = dish.get('base', artifact['targetMean'])
-    quantity = artifact['model'].predict(feature_row)[0] * (base_quantity / artifact['targetMean'])
-    return max(0, round(float(quantity))), artifact['metrics']
+    quantity = scale_prediction(artifact['model'].predict(feature_row)[0], base_quantity, artifact['targetMean'])
+    return quantity, artifact['metrics']
 
 @app.get('/health')
 def health():
