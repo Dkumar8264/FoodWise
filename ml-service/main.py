@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from datetime import date
 import numpy as np
+import joblib
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from train import MODEL_PATH, train
@@ -25,6 +26,19 @@ def train_demo_model(base):
     prediction = model.predict(features[split:])
     return model, round(mean_absolute_error(target[split:], prediction), 2), round(root_mean_squared_error(target[split:], prediction), 2)
 
+def real_model_prediction(payload, dish):
+    """Predict with the persisted Atlas-trained model, scaled to the requested dish baseline."""
+    artifact = joblib.load(MODEL_PATH)
+    weekday = date.fromisoformat(payload.date).weekday()
+    feature_row = [[
+        weekday, date.fromisoformat(payload.date).month, payload.studentCount,
+        int(payload.event.lower() not in ['none', 'holiday']), int(payload.event.lower() == 'holiday'),
+        int(payload.weather.lower() == 'rain'), dish.get('lag7', dish.get('base', 120))
+    ]]
+    base_quantity = dish.get('base', artifact['targetMean'])
+    quantity = artifact['model'].predict(feature_row)[0] * (base_quantity / artifact['targetMean'])
+    return max(0, round(float(quantity))), artifact['metrics']
+
 @app.get('/health')
 def health():
     return {'status': 'ok', 'model': 'RandomForestRegressor', 'trainedModelAvailable': MODEL_PATH.exists()}
@@ -44,9 +58,12 @@ def predict(payload: PredictionRequest):
     predictions, maes, rmses = [], [], []
     for dish in payload.dishes:
         base = dish.get('base', 120)
-        model, mae, rmse = train_demo_model(base)
-        features = np.array([[weekday / 6, min(payload.studentCount / 1800, 1), event_flag, holiday_flag, .55, .48]])
-        quantity = max(0, round(float(model.predict(features)[0])))
+        if MODEL_PATH.exists():
+            quantity, metrics = real_model_prediction(payload, dish); mae, rmse = metrics['mae'], metrics['rmse']; source = 'Atlas-trained Random Forest'
+        else:
+            model, mae, rmse = train_demo_model(base)
+            features = np.array([[weekday / 6, min(payload.studentCount / 1800, 1), event_flag, holiday_flag, .55, .48]])
+            quantity = max(0, round(float(model.predict(features)[0]))); source = 'Demo Random Forest fallback'
         predictions.append({'date': payload.date, 'dish': dish['dish'], 'meal': dish['meal'], 'predictedQuantity': quantity, 'unit': dish.get('unit', 'plates'), 'confidence': round(max(80, 97 - mae / base * 100), 1), 'features': {'weekday': weekday, 'studentCount': payload.studentCount, 'event': payload.event}})
         maes.append(mae); rmses.append(rmse)
-    return {'predictions': predictions, 'metrics': {'mae': round(float(np.mean(maes)), 2), 'rmse': round(float(np.mean(rmses)), 2), 'model': 'Random Forest Regressor'}}
+    return {'predictions': predictions, 'metrics': {'mae': round(float(np.mean(maes)), 2), 'rmse': round(float(np.mean(rmses)), 2), 'model': source, 'trainedModelAvailable': MODEL_PATH.exists()}}

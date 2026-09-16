@@ -42,7 +42,7 @@ def train(mongo_uri=None):
     model = RandomForestRegressor(n_estimators=250, min_samples_leaf=2, random_state=42).fit(x_train, y_train)
     test_pred = model.predict(x_test)
     metrics = {'mae': round(float(mean_absolute_error(y_test, test_pred)), 2), 'rmse': round(float(root_mean_squared_error(y_test, test_pred)), 2), 'trainingRows': int(len(frame)), 'features': features}
-    joblib.dump({'model': model, 'features': features, 'metrics': metrics}, MODEL_PATH)
+    joblib.dump({'model': model, 'features': features, 'metrics': metrics, 'targetMean': float(y.mean())}, MODEL_PATH)
     return metrics
 
 if __name__ == '__main__':
