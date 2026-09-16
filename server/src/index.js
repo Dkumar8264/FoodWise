@@ -14,6 +14,8 @@ app.get('/api/logs', auth, async (_, res) => res.json(await ServiceLog.find().so
 app.post('/api/logs', auth, async (req, res) => res.status(201).json(await ServiceLog.create(req.body)));
 app.get('/api/menu', auth, async (_, res) => res.json(await MenuDish.find({ active: true }).sort({ meal: 1, name: 1 })));
 app.post('/api/menu', auth, async (req, res) => res.status(201).json(await MenuDish.create(req.body)));
+app.patch('/api/menu/:id', auth, async (req, res) => { const dish = await MenuDish.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }); if (!dish) return res.status(404).json({ message: 'Dish not found' }); res.json(dish); });
+app.delete('/api/menu/:id', auth, async (req, res) => { const dish = await MenuDish.findByIdAndUpdate(req.params.id, { active: false }, { new: true }); if (!dish) return res.status(404).json({ message: 'Dish not found' }); res.json(dish); });
 app.get('/api/dashboard', auth, async (_, res) => {
   const [logs, predictions, wasteByDish] = await Promise.all([
     ServiceLog.find().sort({ date: 1 }).limit(30).lean(), Prediction.find().sort({ meal: 1 }).lean(),
