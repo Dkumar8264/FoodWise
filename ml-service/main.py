@@ -4,6 +4,7 @@ from datetime import date
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+from train import MODEL_PATH, train
 
 app = FastAPI(title='FoodWise ML Service')
 
@@ -26,7 +27,14 @@ def train_demo_model(base):
 
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'model': 'RandomForestRegressor'}
+    return {'status': 'ok', 'model': 'RandomForestRegressor', 'trainedModelAvailable': MODEL_PATH.exists()}
+
+@app.post('/train')
+def train_model():
+    try:
+        return {'status': 'trained', 'metrics': train()}
+    except ValueError as error:
+        return {'status': 'not-trained', 'message': str(error)}
 
 @app.post('/predict')
 def predict(payload: PredictionRequest):
