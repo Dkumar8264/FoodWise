@@ -10,7 +10,9 @@ const atlasDnsServers = process.env.ATLAS_DNS_SERVERS?.split(',').map(server => 
 if (atlasDnsServers?.length) dns.setServers(atlasDnsServers);
 const mlUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 const auth = (req, res, next) => { try { req.user = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET); next(); } catch { res.status(401).json({ message: 'Authentication required' }); } };
-app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'foodwise-api' }));
+const databaseStatus = () => mongoose.connection.readyState === 1 ? 'connected' : 'unavailable';
+app.get('/api/health', (_, res) => res.status(databaseStatus() === 'connected' ? 200 : 503).json({ status: databaseStatus() === 'connected' ? 'ok' : 'degraded', service: 'foodwise-api', database: databaseStatus() }));
+app.use('/api', (req, res, next) => databaseStatus() === 'connected' ? next() : res.status(503).json({ message: 'FoodWise is reconnecting to the database. Please retry shortly.' }));
 app.post('/api/auth/login', async (req, res) => { const { email, password } = req.body; const user = await User.findOne({ email: email?.toLowerCase() }); if (!user || !await bcrypt.compare(password || '', user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' }); res.json({ token: jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' }), user: { name: user.name, email: user.email } }); });
 app.get('/api/logs', auth, async (_, res) => res.json(await ServiceLog.find().sort({ date: -1 }).limit(100)));
 app.post('/api/logs', auth, async (req, res) => res.status(201).json(await ServiceLog.create(req.body)));
@@ -63,4 +65,14 @@ app.get('/api/analytics/report.pdf', auth, async (_, res) => {
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const { data } = await axios.post(`${mlUrl}/predict`, req.body); const predictions = await Prediction.insertMany(data.predictions); res.status(201).json({ predictions, metrics: data.metrics }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
 app.patch('/api/predictions/:id', auth, async (req, res) => res.json(await Prediction.findByIdAndUpdate(req.params.id, { override: req.body.override }, { new: true })));
-mongoose.connect(process.env.MONGODB_URI).then(() => app.listen(process.env.PORT || 5000, () => console.log('FoodWise API ready'))).catch(error => { console.error('MongoDB connection failed:', error.message); process.exit(1); });
+const reconnectDelayMs = 10_000;
+const connectDatabase = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10_000 });
+    console.log('MongoDB connected');
+  } catch (error) {
+    console.error(`MongoDB unavailable; retrying in ${reconnectDelayMs / 1000}s:`, error.message);
+    setTimeout(connectDatabase, reconnectDelayMs);
+  }
+};
+app.listen(process.env.PORT || 5000, () => { console.log('FoodWise API ready'); connectDatabase(); });
