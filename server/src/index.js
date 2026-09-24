@@ -4,7 +4,8 @@ import express from 'express'; import cors from 'cors'; import mongoose from 'mo
 import PDFDocument from 'pdfkit';
 import { MenuDish, ServiceLog, Prediction, User } from './models.js';
 import { evaluateHistoricalWaste } from './analytics.js';
-const app = express(); app.use(cors()); app.use(express.json());
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim()).filter(Boolean);
+const app = express(); app.use(cors({ origin: allowedOrigins?.length ? allowedOrigins : true })); app.use(express.json());
 // Some local DNS resolvers block Atlas SRV lookups. Configure public resolvers only when requested.
 const atlasDnsServers = process.env.ATLAS_DNS_SERVERS?.split(',').map(server => server.trim()).filter(Boolean);
 if (atlasDnsServers?.length) dns.setServers(atlasDnsServers);

@@ -23,4 +23,9 @@ For each historical day, calculate baseline waste as `(prepared - consumed) / pr
 
 ## Deploy
 
-Deploy `client` to Vercel, and `server` plus `ml-service` as separate Render or Railway services. Configure `MONGODB_URI`, `JWT_SECRET`, and `ML_SERVICE_URL` for the backend, and point the frontend `/api` proxy or API base URL at that backend.
+Deploy `client` to Vercel, and `server` plus `ml-service` as separate Render or Railway services.
+
+1. Create an Atlas database user and add the hosting provider's outbound IP range to Atlas Network Access. Put its connection string in `MONGODB_URI` on the backend service.
+2. On the backend, configure `JWT_SECRET`, `ML_SERVICE_URL` (the deployed ML service URL), and `CORS_ORIGIN` (the Vercel frontend URL). Never commit these values.
+3. On Vercel, set `VITE_API_URL` to `https://your-backend-domain/api`, then redeploy. Locally, leave it unset so Vite proxies `/api` to port 5000.
+4. Check `https://your-backend-domain/api/health`. A response with `database: "connected"` confirms the API can reach Atlas; `degraded` means it will retry automatically while Atlas is unavailable.
