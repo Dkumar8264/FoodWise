@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getEvaluation, signIn } from '../src/api.js';
+import { generatePredictions, getEvaluation, signIn } from '../src/api.js';
 
 const originalFetch = globalThis.fetch;
 test.after(() => { globalThis.fetch = originalFetch; });
@@ -26,6 +26,18 @@ test('getEvaluation includes the stored JWT and returns backtest metrics', async
 
   assert.equal(result.authorization, 'Bearer jwt-token');
   assert.equal(result.targetAchieved, true);
+});
+
+test('generatePredictions requests a fresh authenticated preparation plan', async () => {
+  let request;
+  globalThis.fetch = async (url, options) => { request = { url, options }; return { ok: true, json: async () => ({ predictions: [], metrics: { model: 'Random Forest' } }) }; };
+
+  const result = await generatePredictions('jwt-token', { event: 'Exam' });
+
+  assert.equal(request.url, '/api/predictions/generate');
+  assert.equal(request.options.headers.Authorization, 'Bearer jwt-token');
+  assert.deepEqual(JSON.parse(request.options.body), { event: 'Exam' });
+  assert.equal(result.metrics.model, 'Random Forest');
 });
 
 test('signIn reports the server error for rejected credentials', async () => {
