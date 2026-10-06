@@ -1,4 +1,4 @@
-# FOODWISE – AI-BASED FOOD DEMAND PREDICTION AND WASTE REDUCTION SYSTEM
+# FOODWISE – AI-BASED FOOD DEMAND PREDICTION AND WASTE REDUCTION SYSTEM FOR COLLEGE CANTEENS
 
 > **Status: design document.** This describes the system we are building, delivered in the phases listed in the [roadmap](#17-roadmap). Features are tagged with the phase in which they land.
 
