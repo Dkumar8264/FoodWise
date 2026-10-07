@@ -5,3 +5,7 @@ dist/
 __pycache__/
 *.pyc
 foodwise_model.joblib
+
+# Word documents (synopsis drafts) and Office lock files
+*.docx
+~$*
