@@ -35,7 +35,7 @@ Any college can sign up, load its own history, and get models trained on its own
 | # | Goal |
 |---|------|
 | G1 | **Bring your own data.** A college onboards itself, uploads its own service history, and gets a model trained on that data, isolated from every other college. |
-| G2 | **Best model, not a fixed model.** Each canteen is served by whichever algorithm wins an honest, time-aware backtest on its own data. Random Forest is one candidate among many. |
+| G2 | **Best model, not a fixed model.** Each canteen is served by whichever algorithm wins an honest, time-aware backtest on its own data. |
 | G3 | **Cost-aware forecasts.** Output is a probability range plus a recommended preparation quantity that reflects the canteen's own cost of waste versus cost of running out. |
 | G4 | **Students in the loop.** Dish ratings, comments, votes and meal RSVPs are processed and fed into the forecast and into menu suggestions. |
 | G5 | **Rescue, not just reduction.** When a large unexpected surplus occurs, verified nearby organisations are matched, alerted and tracked inside the food-safety window. |
@@ -321,7 +321,6 @@ Tenant `serviceMode` tells the system which framings make sense: `fixed_thali` (
 | Baselines | Seasonal naive (same weekday last week), trailing weighted mean | Always run. Every other model must beat them to be promoted |
 | Linear | Ridge, Elastic Net with calendar encodings | Low-data tiers, fully interpretable |
 | Classical time series | ETS, SARIMAX (statsforecast) | One-series cases with strong seasonality |
-| Bagged trees | Random Forest, Extra Trees | Kept as candidates alongside the other families |
 | Gradient boosting | LightGBM, XGBoost, CatBoost | Usually strongest on tabular demand data; LightGBM quantile objective gives P10/P50/P90 |
 | Prediction intervals | Conformal wrappers (MAPIE) on any point model | Calibrated intervals for models without native quantiles |
 | Neural (optional) | N-HiTS or TFT through a forecasting library | Only with a year or more of data or an opted-in pooled model |
