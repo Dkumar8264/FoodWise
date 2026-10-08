@@ -1,5 +1,9 @@
 # FOODWISE – AI-BASED FOOD DEMAND PREDICTION AND WASTE REDUCTION SYSTEM FOR COLLEGE CANTEENS
 
+## Live application
+
+**Vercel:** [https://foodwise-iota.vercel.app](https://foodwise-iota.vercel.app)
+
 > **Status: design document.** This describes the system we are building, delivered in the phases listed in the [roadmap](#17-roadmap). Features are tagged with the phase in which they land.
 
 FoodWise helps college canteens and hostel messes **cook the right amount of food**, learns from **what students actually like**, and, when something unpredictable leaves a large amount of cooked food unserved, **alerts nearby organisations that feed people in need** before the food becomes unsafe.
