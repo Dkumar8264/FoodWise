@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogMedia, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -25,8 +26,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  createDish, createServiceLog, deactivateDish, downloadPdfReport, downloadReport,
-  generatePredictions, getAlerts, getDashboard, getEvaluation, getMenu, signIn, updatePrediction
+  createDish, createServiceLog, deactivateDish, deleteLatestServiceLog, downloadPdfReport, downloadReport,
+  generatePredictions, getAlerts, getDashboard, getEvaluation, getLatestServiceLog, getMenu, signIn, updatePrediction
 } from './api';
 import './styles.css';
 
@@ -151,7 +152,7 @@ function Workspace({ token, dark, setDark, logout }) {
       <main className="workspace">{error && <div className="inline-alert error workspace-alert" role="alert"><AlertTriangle />{error}<Button variant="ghost" size="sm" onClick={() => loadAll(true)}>Retry</Button></div>}
         <Overview dashboard={dashboard} evaluation={evaluation} onGenerate={generatePlan} generating={generating} onNavigate={scrollTo} onExport={exportFile} reduceMotion={reduceMotion} />
         <Forecast rows={rows} onChange={changeOverride} onGenerate={generatePlan} onSave={savePlan} generating={generating} saving={savingPlan} reduceMotion={reduceMotion} />
-        <ServiceLog token={token} onSaved={() => loadAll(true)} notify={notify} reduceMotion={reduceMotion} />
+        <ServiceLog token={token} onChanged={() => loadAll(true)} notify={notify} reduceMotion={reduceMotion} />
         <MenuManager token={token} dishes={dishes} onAdded={() => loadAll(true)} notify={notify} onDeactivate={setDishToDeactivate} reduceMotion={reduceMotion} />
         <Insights alerts={alerts} evaluation={evaluation} onExport={exportFile} reduceMotion={reduceMotion} />
       </main>
@@ -196,13 +197,16 @@ function Forecast({ rows, onChange, onGenerate, onSave, generating, saving, redu
   </motion.section>;
 }
 
-function ServiceLog({ token, onSaved, notify, reduceMotion }) {
+function ServiceLog({ token, onChanged, notify, reduceMotion }) {
   const [entry, setEntry] = useState({ date: today, dish: 'Vegetable pulao', meal: 'Lunch', prepared: 190, consumed: 176, wasted: 14, studentCount: 1200, weather: 'Clear', event: 'None' });
-  const [errors, setErrors] = useState({}); const [saving, setSaving] = useState(false); const numericFields = ['prepared', 'consumed', 'wasted', 'studentCount'];
+  const [errors, setErrors] = useState({}); const [saving, setSaving] = useState(false); const [checkingLatest, setCheckingLatest] = useState(false); const [deleting, setDeleting] = useState(false); const [deleteOpen, setDeleteOpen] = useState(false); const [latestLog, setLatestLog] = useState(null); const numericFields = ['prepared', 'consumed', 'wasted', 'studentCount'];
   const update = (key, value) => { setEntry((current) => ({ ...current, [key]: numericFields.includes(key) ? Number(value) : value })); setErrors((current) => ({ ...current, [key]: '', quantities: '' })); };
   const validate = () => { const next = {}; if (!entry.date) next.date = 'Choose a service date.'; if (!entry.dish.trim()) next.dish = 'Enter a dish name.'; if (entry.prepared <= 0) next.prepared = 'Prepared quantity must be greater than zero.'; if (entry.consumed < 0) next.consumed = 'Served quantity cannot be negative.'; if (entry.wasted < 0) next.wasted = 'Waste quantity cannot be negative.'; if (entry.studentCount < 0) next.studentCount = 'Student count cannot be negative.'; if (entry.consumed + entry.wasted > entry.prepared) next.quantities = 'Served plus waste cannot exceed the prepared quantity.'; setErrors(next); return Object.keys(next).length === 0; };
-  const submit = async (event) => { event.preventDefault(); if (!validate()) return; setSaving(true); try { await createServiceLog(token, { ...entry, dish: entry.dish.trim(), date: new Date(`${entry.date}T12:00:00`).toISOString() }); notify('Service log saved and included in analytics.'); onSaved(); } catch (actionError) { notify(actionError.message, 'error'); } finally { setSaving(false); } };
+  const submit = async (event) => { event.preventDefault(); if (!validate()) return; setSaving(true); try { await createServiceLog(token, { ...entry, dish: entry.dish.trim(), date: new Date(`${entry.date}T12:00:00`).toISOString() }); notify('Service log saved and included in analytics.'); onChanged(); } catch (actionError) { notify(actionError.message, 'error'); } finally { setSaving(false); } };
+  const prepareDelete = async () => { setCheckingLatest(true); try { setLatestLog(await getLatestServiceLog(token)); setDeleteOpen(true); } catch (actionError) { notify(actionError.message, 'error'); } finally { setCheckingLatest(false); } };
+  const confirmDelete = async (event) => { event.preventDefault(); setDeleting(true); try { const result = await deleteLatestServiceLog(token); const removed = result.log; notify(`${removed.dish} from ${new Date(removed.date).toLocaleDateString('en-IN')} was deleted.`); setDeleteOpen(false); setLatestLog(null); await onChanged(); } catch (actionError) { notify(actionError.message, 'error'); } finally { setDeleting(false); } };
   const fieldError = (key) => errors[key] ? <small className="field-error" id={`${key}-error`}>{errors[key]}</small> : null;
+  const latestDate = latestLog ? new Date(latestLog.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   return <motion.section id="service-log" className="workspace-section" initial={reduceMotion ? false : { opacity: 0, y: 22 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-80px' }}><SectionHeading kicker="DAILY OPERATIONS" title="Log today's service" copy="Good forecasts start with clean service data. One dish takes less than a minute." />
     <Card className="form-card"><form onSubmit={submit} noValidate>{errors.quantities && <div className="inline-alert error" role="alert"><AlertTriangle />{errors.quantities}</div>}<div className="form-grid">
       <Field label="Service date" error={fieldError('date')}><Input type="date" max={today} value={entry.date} aria-invalid={Boolean(errors.date)} aria-describedby={errors.date ? 'date-error' : undefined} onChange={(event) => update('date', event.target.value)} /></Field>
@@ -211,7 +215,8 @@ function ServiceLog({ token, onSaved, notify, reduceMotion }) {
       <Field label="Weather"><Select value={entry.weather} onValueChange={(value) => update('weather', value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Clear">Clear</SelectItem><SelectItem value="Rain">Rain</SelectItem><SelectItem value="Cloudy">Cloudy</SelectItem><SelectItem value="Hot">Hot</SelectItem></SelectContent></Select></Field>
       {[["Prepared quantity", 'prepared'], ["Served quantity", 'consumed'], ["Waste / leftovers", 'wasted'], ["Students on campus", 'studentCount']].map(([label, key]) => <Field key={key} label={label} error={fieldError(key)}><Input type="number" min="0" value={entry[key]} aria-invalid={Boolean(errors[key])} aria-describedby={errors[key] ? `${key}-error` : undefined} onChange={(event) => update(key, event.target.value)} /></Field>)}
       <Field label="Campus event" hint="Optional context improves demand forecasting."><Input value={entry.event} placeholder="None, exam week, fest…" onChange={(event) => update('event', event.target.value)} /></Field>
-    </div><div className="form-submit-row"><p><Leaf /> This entry will update your live metrics.</p><Button size="lg" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <Save />}{saving ? 'Saving service…' : 'Save service log'}</Button></div></form></Card>
+    </div><div className="form-submit-row"><p><Leaf /> This entry will update your live metrics.</p><div className="form-actions"><Button type="button" variant="outline" size="lg" onClick={prepareDelete} disabled={checkingLatest || deleting}>{checkingLatest ? <LoaderCircle className="spin" /> : <Trash2 />}{checkingLatest ? 'Checking latest…' : 'Delete latest log'}</Button><Button size="lg" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <Save />}{saving ? 'Saving service…' : 'Save service log'}</Button></div></div></form></Card>
+    <AlertDialog open={deleteOpen} onOpenChange={(open) => { if (!deleting) { setDeleteOpen(open); if (!open) setLatestLog(null); } }}><AlertDialogContent><AlertDialogHeader><AlertDialogMedia className="delete-dialog-icon"><Trash2 /></AlertDialogMedia><AlertDialogTitle>Delete the latest service log?</AlertDialogTitle><AlertDialogDescription>{latestLog ? <><strong>{latestLog.dish}</strong> · {latestLog.meal} · {latestDate}<br />Prepared {latestLog.prepared}, served {latestLog.consumed}, waste {latestLog.wasted}. This permanently removes the record and updates your analytics.</> : 'This permanently removes the newest service record and updates your analytics.'}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>Keep log</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={confirmDelete} disabled={deleting}>{deleting ? <LoaderCircle className="spin" /> : <Trash2 />}{deleting ? 'Deleting…' : 'Delete latest log'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </motion.section>;
 }
 
