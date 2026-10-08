@@ -12,8 +12,22 @@ if (atlasDnsServers?.length) dns.setServers(atlasDnsServers);
 const mlUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 const auth = (req, res, next) => { try { req.user = jwt.verify(req.headers.authorization?.split(' ')[1], process.env.JWT_SECRET); next(); } catch { res.status(401).json({ message: 'Authentication required' }); } };
 const databaseStatus = () => mongoose.connection.readyState === 1 ? 'connected' : 'unavailable';
-app.get('/api/health', (_, res) => res.status(databaseStatus() === 'connected' ? 200 : 503).json({ status: databaseStatus() === 'connected' ? 'ok' : 'degraded', service: 'foodwise-api', database: databaseStatus() }));
-app.use('/api', (req, res, next) => databaseStatus() === 'connected' ? next() : res.status(503).json({ message: 'FoodWise is reconnecting to the database. Please retry shortly.' }));
+let connectionPromise;
+const connectDatabase = async () => {
+  if (mongoose.connection.readyState === 1) return mongoose.connection;
+  if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is not configured');
+  if (!connectionPromise) {
+    connectionPromise = mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10_000 })
+      .then(() => { console.log('MongoDB connected'); return mongoose.connection; })
+      .catch(error => { connectionPromise = undefined; throw error; });
+  }
+  return connectionPromise;
+};
+app.use('/api', async (_, res, next) => {
+  try { await connectDatabase(); next(); }
+  catch (error) { console.error('MongoDB unavailable:', error.message); res.status(503).json({ message: 'FoodWise could not connect to the database. Please retry shortly.' }); }
+});
+app.get('/api/health', (_, res) => res.json({ status: 'ok', service: 'foodwise-api', database: databaseStatus() }));
 app.post('/api/auth/login', async (req, res) => { const { email, password } = req.body; const user = await User.findOne({ email: email?.toLowerCase() }); if (!user || !await bcrypt.compare(password || '', user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' }); res.json({ token: jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' }), user: { name: user.name, email: user.email } }); });
 app.get('/api/logs', auth, async (_, res) => res.json(await ServiceLog.find().sort({ date: -1 }).limit(100)));
 app.post('/api/logs', auth, async (req, res) => { const { prepared, consumed, wasted } = req.body; if (!Number.isFinite(prepared) || !Number.isFinite(consumed) || !Number.isFinite(wasted) || prepared <= 0 || consumed < 0 || wasted < 0 || consumed + wasted > prepared) return res.status(400).json({ message: 'Prepared quantity must cover the served and wasted quantities.' }); res.status(201).json(await ServiceLog.create(req.body)); });
@@ -66,14 +80,11 @@ app.get('/api/analytics/report.pdf', auth, async (_, res) => {
 app.get('/api/predictions', auth, async (_, res) => res.json(await Prediction.find({ date: { $gte: new Date(new Date().toDateString()) } }).sort({ meal: 1 })));
 app.post('/api/predictions/generate', auth, async (req, res) => { try { const target = req.body.date ? new Date(`${req.body.date}T12:00:00`) : new Date(); if (!req.body.date) target.setDate(target.getDate() + 1); target.setHours(12, 0, 0, 0); if (Number.isNaN(target.valueOf())) return res.status(400).json({ message: 'Use a valid prediction date.' }); const [menu, logs] = await Promise.all([MenuDish.find({ active: true }).lean(), ServiceLog.find().sort({ date: -1 }).limit(100).lean()]); if (!menu.length) return res.status(400).json({ message: 'Add an active menu dish before generating predictions.' }); const latest = logs[0]; const payload = { date: target.toISOString().slice(0, 10), studentCount: req.body.studentCount ?? latest?.studentCount ?? 1200, event: req.body.event ?? 'None', weather: req.body.weather ?? latest?.weather ?? 'Clear', dishes: menu.map(dish => { const history = logs.filter(log => log.dish === dish.name && log.meal === dish.meal).slice(0, 14); const average = history.length ? history.reduce((sum, log) => sum + log.consumed, 0) / history.length : 120; return { dish: dish.name, meal: dish.meal, unit: dish.unit, base: Math.round(average), lag7: history[6]?.consumed ?? Math.round(average) }; }) }; const { data } = await axios.post(`${mlUrl}/predict`, payload); const predictions = await Promise.all(data.predictions.map(prediction => Prediction.findOneAndUpdate({ date: target, dish: prediction.dish, meal: prediction.meal }, { ...prediction, date: target }, { new: true, upsert: true, runValidators: true }))); res.status(201).json({ predictions, metrics: data.metrics, context: { date: payload.date, studentCount: payload.studentCount, event: payload.event, weather: payload.weather } }); } catch (error) { res.status(503).json({ message: 'Prediction service unavailable', detail: error.message }); } });
 app.patch('/api/predictions/:id', auth, async (req, res) => res.json(await Prediction.findByIdAndUpdate(req.params.id, { override: req.body.override }, { new: true })));
-const reconnectDelayMs = 10_000;
-const connectDatabase = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10_000 });
-    console.log('MongoDB connected');
-  } catch (error) {
-    console.error(`MongoDB unavailable; retrying in ${reconnectDelayMs / 1000}s:`, error.message);
-    setTimeout(connectDatabase, reconnectDelayMs);
-  }
-};
-app.listen(process.env.PORT || 5000, () => { console.log('FoodWise API ready'); connectDatabase(); });
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(process.env.PORT || 5000, async () => {
+    console.log('FoodWise API ready');
+    try { await connectDatabase(); } catch (error) { console.error('MongoDB unavailable:', error.message); }
+  });
+}
