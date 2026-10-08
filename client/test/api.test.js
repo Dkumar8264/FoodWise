@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { deleteLatestServiceLog, generatePredictions, getEvaluation, getLatestServiceLog, signIn } from '../src/api.js';
+import { calculateWaste } from '../src/service-log.js';
 
 const originalFetch = globalThis.fetch;
 test.after(() => { globalThis.fetch = originalFetch; });
@@ -62,4 +63,10 @@ test('signIn reports the server error for rejected credentials', async () => {
   globalThis.fetch = async () => ({ ok: false, json: async () => ({ message: 'Invalid email or password' }) });
 
   await assert.rejects(() => signIn('wrong@example.com', 'wrong'), /Invalid email or password/);
+});
+
+test('calculateWaste derives a non-negative value from prepared and served quantities', () => {
+  assert.equal(calculateWaste(190, 176), 14);
+  assert.equal(calculateWaste('120', '95'), 25);
+  assert.equal(calculateWaste(80, 90), 0);
 });
